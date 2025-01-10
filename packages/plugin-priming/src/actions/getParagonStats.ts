@@ -1,48 +1,63 @@
-import { Action, IAgentRuntime, Memory } from "@elizaos/core";
+import { Action, IAgentRuntime, Memory, elizaLogger } from "@elizaos/core";
 import { paragonProvider } from "../providers/paragonProvider";
+
+const paragonNames = [
+    'jahn', 'arak', 'gaffar', 'lemieux', 'catherine',
+    'armoured division', 'gnaeus', 'scipius', 'aetio',
+    'juggernaut', 'brand', 'niamh', 'new dawn',
+    'shoshanna', 'nehemiah'
+];
 
 export const getParagonStatsAction: Action = {
     name: "GET_PARAGON_STATS",
     similes: [
         // Overview queries
-        "CHECK_PARAGON_STATS", "SHOW_PARAGON_STATS",
-        "GET_PARAGON_DETAILS", "SHOW_PARAGON_DETAILS",
-        "WHAT_DOES_PARAGON_DO", "HOW_DOES_PARAGON_WORK",
+        ...paragonNames.flatMap(name => [
+            `CHECK_${name.toUpperCase()}_STATS`,
+            `SHOW_${name.toUpperCase()}_STATS`,
+            `GET_${name.toUpperCase()}_DETAILS`,
+            `WHAT_DOES_${name.toUpperCase()}_DO`
+        ]),
         // Matchup queries
-        "GET_PARAGON_MATCHUPS", "SHOW_PARAGON_MATCHUPS",
-        "WHO_BEATS_PARAGON", "WHO_DOES_PARAGON_BEAT",
-        "PARAGON_WIN_RATES", "PARAGON_VERSUS",
+        ...paragonNames.flatMap(name => [
+            `GET_${name.toUpperCase()}_MATCHUPS`,
+            `WHO_BEATS_${name.toUpperCase()}`,
+            `WHO_DOES_${name.toUpperCase()}_BEAT`,
+            `${name.toUpperCase()}_WIN_RATES`
+        ]),
         // Deck queries
-        "GET_PARAGON_DECK", "SHOW_PARAGON_DECK",
-        "WHAT_TO_PLAY_WITH_PARAGON", "HOW_TO_BUILD_PARAGON",
-        "BEST_PARAGON_DECK", "TOP_PARAGON_DECK",
+        ...paragonNames.flatMap(name => [
+            `GET_${name.toUpperCase()}_DECK`,
+            `HOW_TO_BUILD_${name.toUpperCase()}`,
+            `BEST_${name.toUpperCase()}_DECK`
+        ]),
         // Core card queries
-        "WHAT_CARDS_GO_WITH_PARAGON", "SHOW_PARAGON_CORE_CARDS",
-        "MOST_USED_CARDS_WITH_PARAGON", "PARAGON_STAPLES",
-        "WHAT_DO_PEOPLE_PLAY_WITH_PARAGON"
+        ...paragonNames.flatMap(name => [
+            `WHAT_CARDS_GO_WITH_${name.toUpperCase()}`,
+            `SHOW_${name.toUpperCase()}_CORE_CARDS`,
+            `${name.toUpperCase()}_STAPLES`
+        ])
     ],
     description: "Fetch and display Parallel Paragon statistics (overview, matchups, or deck builds)",
     validate: async (_runtime: IAgentRuntime, message: Memory) => {
         const text = message.content.text.toLowerCase();
 
-        // Check if message contains a paragon name
-        const paragonNames = [
-            'jahn', 'arak', 'gaffar', 'lemieux', 'catherine',
-            'armoured division', 'gnaeus', 'scipius', 'aetio',
-            'juggernaut', 'brand', 'niamh', 'new dawn',
-            'shoshanna', 'nehemiah'
-        ];
-
         const hasParagonName = paragonNames.some(name =>
             text.includes(name.toLowerCase())
         );
 
-        // Check for relevant keywords
+        // Expand keywords to include more variations
         const keywords = [
             'paragon', 'deck', 'build', 'matchup', 'versus', 'vs',
-            'stats', 'details', 'info', 'about'
+            'stats', 'details', 'info', 'about', 'beat', 'win',
+            'against', 'play', 'rate', 'performance', 'how'
         ];
         const hasKeyword = keywords.some(word => text.includes(word));
+
+        // Add debug logging
+        elizaLogger.debug(`[PrimingPlugin] Validating message: "${text}"`);
+        elizaLogger.debug(`[PrimingPlugin] Has paragon name: ${hasParagonName}`);
+        elizaLogger.debug(`[PrimingPlugin] Has keyword: ${hasKeyword}`);
 
         return hasParagonName && hasKeyword;
     },

@@ -53,8 +53,28 @@ export const cardProvider: Provider = {
             orderBy = 'popularity';
         } else if (winTerms.some(term => text.includes(term))) {
             orderBy = 'winRate';
+            const data = await CacheManager.withCache(orderBy, () => fetchCardData(orderBy, runtime));
+
+            // Filter for cards with significant popularity (>= 40%) before sorting by winrate
+            const significantCards = data
+                .filter(card => card.popularity >= 40)
+                .sort((a, b) => b.winRate - a.winRate);
+
+            return `Win Rate Cards (minimum 40% popularity):\n${JSON.stringify(significantCards.slice(0, 10), null, 2)}`;
         } else if (volumeTerms.some(term => text.includes(term))) {
             orderBy = 'volume';
+            const data = await CacheManager.withCache(orderBy, () => fetchCardData(orderBy, runtime));
+            const sortedCards = data
+                .sort((a, b) => b.volume - a.volume)
+                .slice(0, 10)
+                .map(card => ({
+                    name: card.name,
+                    volumeUSD: `$${card.volume.toLocaleString()}`,
+                    transactions: card.transactions,
+                    averagePriceUSD: `$${card.averagePrice.toFixed(2)}`
+                }));
+
+            return `Most traded cards by volume (last 30 days):\n${JSON.stringify(sortedCards, null, 2)}`;
         } else {
             // Return undefined if we can't handle this request
             return undefined;

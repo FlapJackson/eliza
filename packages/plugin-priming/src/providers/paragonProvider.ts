@@ -1,5 +1,5 @@
 import { Provider, IAgentRuntime, Memory, State, elizaLogger } from "@elizaos/core";
-import { ParagonDetails, ParagonMatchup, ParagonDeck } from "../types";
+import { ParagonDetails, ParagonMatchup, ParagonDeck, CoreCard } from "../types";
 import { CacheManager } from "../cache";
 
 const PARAGON_MAP: { [key: string]: string } = {
@@ -39,13 +39,32 @@ async function fetchParagonMatchups(paragonId: string): Promise<ParagonMatchup[]
     elizaLogger.info(`[PrimingPlugin] Fetching matchups for paragon ${paragonId}`);
     const response = await fetch(
         `https://api.priming.xyz/parallel/cards/game/paragon-vs-paragon?paragonId=${paragonId}`
-    ); //todo: take only relevant stats from response. Agent is getting too much data
+    );
 
     if (!response.ok) {
+        elizaLogger.error(`[PrimingPlugin] API Error: ${response.status} ${response.statusText}`);
         throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    elizaLogger.info(`[PrimingPlugin] Raw matchup data: ${JSON.stringify(data)}`);
+
+    if (!Array.isArray(data)) {
+        elizaLogger.error(`[PrimingPlugin] Expected array of matchups, got: ${typeof data}`);
+        return [];
+    }
+
+    const mappedData = data.map((matchup: any) => {
+        const result = {
+            vsParagonId: getParagonNameById(matchup.vsParagonId),
+            totalGames30: parseInt(matchup.totalGames30) || 0,
+            totalWinRate30: parseFloat(matchup.totalWinRate30) || 0
+        };
+        elizaLogger.info(`[PrimingPlugin] Mapped matchup: ${JSON.stringify(result)}`);
+        return result;
+    });
+
+    return mappedData;
 }
 
 async function fetchParagonDecks(paragonId: string): Promise<ParagonDeck[]> {
@@ -62,6 +81,35 @@ async function fetchParagonDecks(paragonId: string): Promise<ParagonDeck[]> {
     return data.decks;
 }
 
+async function fetchParagonCoreCards(paragonId: string): Promise<CoreCard[]> {
+    elizaLogger.info(`[PrimingPlugin] Fetching core cards for paragon ${paragonId}`);
+    const response = await fetch(
+        `https://api.priming.xyz/parallel/cards/game/paragon-core-cards?paragonId=${paragonId}`
+    );
+
+    if (!response.ok) {
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data
+        .filter((card: any) => card?.parallelGameData) // Filter out entries with missing data
+        .map((card: any) => ({
+            name: card.name,
+            frequency: card.frequency,
+            parallel: card.parallelGameData?.parallel || 'unknown',
+            rarity: card.parallelGameData?.rarity || 'unknown',
+            cardType: card.parallelGameData?.cardType || 'unknown',
+            cost: card.parallelGameData?.cost,
+            attack: card.parallelGameData?.attack,
+            health: card.parallelGameData?.health
+        }));
+}
+
+function getParagonNameById(id: string): string {
+    return Object.entries(PARAGON_MAP).find(([_, value]) => value === id)?.[0] || id;
+}
+
 export const paragonProvider: Provider = {
     get: async (runtime: IAgentRuntime, message: Memory, _state?: State) => {
         const text = message.content.text.toLowerCase();
@@ -76,14 +124,39 @@ export const paragonProvider: Provider = {
         }
 
         const paragonId = PARAGON_MAP[paragonName];
+        elizaLogger.info(`[PrimingPlugin] Processing request for ${paragonName} (${paragonId})`);
+
+        // Core cards query
+        if (text.includes('core') || text.includes('cards') || text.includes('synergy') || text.includes('staples')) {
+            elizaLogger.info(`[PrimingPlugin] Fetching core cards for ${paragonName}`);
+            const data = await CacheManager.withCache(`${paragonId}-core-cards`, () =>
+                fetchParagonCoreCards(paragonId)
+            );
+            const sortedCards = data.sort((a, b) => b.frequency - a.frequency);
+            return `${paragonName}'s most played cards:\n${JSON.stringify(sortedCards.slice(0, 5), null, 2)}`;
+        }
 
         // Determine what information is being requested
-        if (text.includes('matchup') || text.includes('versus') || text.includes('vs')) {
+        if (text.includes('matchup') || text.includes('versus') || text.includes('vs') ||
+            text.includes('beat') || text.includes('win')) {
             const data = await CacheManager.withCache(`${paragonId}-matchups`, () =>
                 fetchParagonMatchups(paragonId)
             );
-            const sortedMatchups = data.sort((a, b) => b.totalGames30 - a.totalGames30);
-            return `${paragonName}'s top matchups (last 30 days):\n${JSON.stringify(sortedMatchups.slice(0, 5), null, 2)}`;
+
+            // Filter for meaningful sample size (e.g., 50+ games) and sort by winrate
+            const activeMatchups = data
+                .filter(m => m.totalGames30 >= 10)  // Only include matchups with significant games
+                .sort((a, b) => b.totalWinRate30 - a.totalWinRate30)  // Sort by winrate
+                .slice(0, 10);  // Take top 10 matchups
+
+            if (activeMatchups.length === 0) {
+                return `${paragonName} has no significant matchups (10+ games) in the last 30 days.`;
+            }
+
+            return `${paragonName}'s matchup stats (last 30 days, minimum 10 games):\n` +
+                activeMatchups.map(m =>
+                    `vs ${m.vsParagonId}: ${m.totalWinRate30.toFixed(1)}% winrate (${m.totalGames30} games)`
+                ).join('\n');
         }
 
         if (text.includes('deck') || text.includes('build')) {
