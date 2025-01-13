@@ -10,7 +10,7 @@ async function fetchCardData(orderBy: OrderByType, runtime: IAgentRuntime): Prom
 
     elizaLogger.info(`[PrimingPlugin] Fetching card stats ordered by ${orderBy}`);
     const response = await fetch(
-        `https://api.priming.xyz/parallel/cards/top/selling?take=10&skip=0&startTimestamp=${oneMonthAgo}&endTimestamp=${now}&denomination=usd&orderBy=${orderBy}`
+        `https://api.priming.xyz/parallel/cards/top/selling?take=50&skip=0&startTimestamp=${oneMonthAgo}&endTimestamp=${now}&denomination=usd&orderBy=${orderBy}`
     );
 
     if (!response.ok) {
@@ -19,9 +19,10 @@ async function fetchCardData(orderBy: OrderByType, runtime: IAgentRuntime): Prom
     }
 
     const data = await response.json();
-    elizaLogger.debug(`[PrimingPlugin] Received ${data.length} entries`);
+    elizaLogger.info(`[PrimingPlugin] Raw API response: ${JSON.stringify(data)}`);
+    elizaLogger.info(`[PrimingPlugin] Received ${data.length} entries`);
 
-    return data.map((card: any) => ({
+    const mappedData = data.map((card: any) => ({
         name: card.name,
         parallel: card.parallel,
         rarity: card.rarity,
@@ -34,11 +35,14 @@ async function fetchCardData(orderBy: OrderByType, runtime: IAgentRuntime): Prom
         averagePrice: card.averagePrice,
         volume: card.volume
     }));
+    elizaLogger.info(`[PrimingPlugin] Mapped data: ${JSON.stringify(mappedData)}`);
+    return mappedData;
 }
 
 export const cardProvider: Provider = {
     get: async (runtime: IAgentRuntime, message: Memory, _state?: State) => {
         const text = message.content.text.toLowerCase();
+        elizaLogger.info(`[PrimingPlugin] Processing request: "${text}"`);
 
         // Popularity keywords
         const popularityTerms = ['popular', 'trending', 'most played', 'favorite', 'favourite'];
@@ -51,30 +55,73 @@ export const cardProvider: Provider = {
 
         if (popularityTerms.some(term => text.includes(term))) {
             orderBy = 'popularity';
+            elizaLogger.info(`[PrimingPlugin] Fetching popularity data`);
+            const data = await CacheManager.withCache(orderBy, () => fetchCardData(orderBy, runtime));
+            elizaLogger.info(`[PrimingPlugin] Processing popularity data for ${data.length} cards`);
+
+            const validCards = data.filter(card =>
+                card.popularity !== null &&
+                card.popularity !== undefined &&
+                card.winRate !== null &&
+                card.winRate !== undefined
+            );
+            elizaLogger.info(`[PrimingPlugin] Found ${validCards.length} cards with valid data`);
+
+            const sortedCards = validCards
+                .sort((a, b) => b.popularity - a.popularity)
+                .slice(0, 10)
+                .map(card => `${card.name}: ${card.popularity.toFixed(1)}% play rate (${card.winRate.toFixed(1)}% win rate)`);
+
+            const response = `Most popular cards (last 30 days):\n${sortedCards.join('\n')}`;
+            elizaLogger.info(`[PrimingPlugin] Sending response: ${response}`);
+            return response;
+
         } else if (winTerms.some(term => text.includes(term))) {
             orderBy = 'winRate';
+            elizaLogger.info(`[PrimingPlugin] Fetching win rate data`);
             const data = await CacheManager.withCache(orderBy, () => fetchCardData(orderBy, runtime));
+            elizaLogger.info(`[PrimingPlugin] Processing win rate data for ${data.length} cards`);
 
-            // Filter for cards with significant popularity (>= 40%) before sorting by winrate
-            const significantCards = data
-                .filter(card => card.popularity >= 40)
-                .sort((a, b) => b.winRate - a.winRate);
+            const validCards = data.filter(card =>
+                card.popularity !== null &&
+                card.popularity !== undefined &&
+                card.winRate !== null &&
+                card.winRate !== undefined
+            );
+            elizaLogger.info(`[PrimingPlugin] Found ${validCards.length} cards with valid data`);
 
-            return `Win Rate Cards (minimum 40% popularity):\n${JSON.stringify(significantCards.slice(0, 10), null, 2)}`;
+            // Filter for cards with popularity >= 25%
+            const significantCards = validCards
+                .filter(card => card.popularity >= 25);
+            elizaLogger.info(`[PrimingPlugin] Found ${significantCards.length} cards with >= 25% popularity`);
+            elizaLogger.info(`[PrimingPlugin] Filtered cards: ${JSON.stringify(significantCards.map(c => ({ name: c.name, popularity: c.popularity, winRate: c.winRate })))}`);
+
+            const sortedCards = significantCards
+                .sort((a, b) => b.winRate - a.winRate)
+                .slice(0, 10)
+                .map(card => `${card.name}: ${card.winRate.toFixed(1)}% win rate (${card.popularity.toFixed(1)}% popularity)`);
+
+            const response = `Top performing cards (minimum 25% popularity):\n${sortedCards.join('\n')}`;
+            elizaLogger.info(`[PrimingPlugin] Available win rate data: ${response}`);
+            return response;
         } else if (volumeTerms.some(term => text.includes(term))) {
             orderBy = 'volume';
             const data = await CacheManager.withCache(orderBy, () => fetchCardData(orderBy, runtime));
-            const sortedCards = data
+
+            const validCards = data.filter(card =>
+                card.volume !== null &&
+                card.volume !== undefined &&
+                card.transactions !== null &&
+                card.transactions !== undefined
+            );
+            elizaLogger.info(`[PrimingPlugin] Found ${validCards.length} cards with valid volume data`);
+
+            const sortedCards = validCards
                 .sort((a, b) => b.volume - a.volume)
                 .slice(0, 10)
-                .map(card => ({
-                    name: card.name,
-                    volumeUSD: `$${card.volume.toLocaleString()}`,
-                    transactions: card.transactions,
-                    averagePriceUSD: `$${card.averagePrice.toFixed(2)}`
-                }));
+                .map(card => `${card.name}: $${card.volume.toLocaleString()} (${card.transactions} trades)`);
 
-            return `Most traded cards by volume (last 30 days):\n${JSON.stringify(sortedCards, null, 2)}`;
+            return `Most traded cards (last 30 days):\n${sortedCards.join('\n')}`;
         } else {
             // Return undefined if we can't handle this request
             return undefined;

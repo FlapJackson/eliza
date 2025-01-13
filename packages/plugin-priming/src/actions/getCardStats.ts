@@ -12,7 +12,11 @@ export const getCardStatsAction: Action = {
         "MOST_SUCCESSFUL_CARDS", "HIGHEST_WINRATE",
         // Volume related
         "GET_VOLUME_CARDS", "MOST_TRADED_CARDS", "TRADING_VOLUME",
-        "MARKET_ACTIVITY", "TRANSACTION_VOLUME"
+        "MARKET_ACTIVITY", "TRANSACTION_VOLUME",
+        // Volume specific
+        "GET_SELLING_CARDS", "SHOW_MARKET_VOLUME", "MOST_TRADED_CARDS",
+        "HIGHEST_VOLUME_CARDS", "WHAT_CARDS_ARE_SELLING", "MARKET_ACTIVITY",
+        "TRADING_VOLUME", "SALES_DATA"
     ],
     description: "Fetch and display Parallel card statistics (popularity, win rate, or volume)",
     validate: async (_runtime: IAgentRuntime, message: Memory) => {
